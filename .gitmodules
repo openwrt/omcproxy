@@ -1,0 +1,3 @@
+[submodule "libubox"]
+	path = libubox
+	url = http://git.openwrt.org/project/libubox.git

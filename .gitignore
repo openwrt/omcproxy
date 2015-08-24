@@ -1,0 +1,17 @@
+.project
+.cproject
+CMakeCache.txt
+CMakeFiles
+CMakeScripts
+cmake_install.cmake
+Makefile
+omcproxy
+CTestTestfile.cmake
+Testing
+coverage.info
+test_ifgroup
+test_rib
+coverage
+.settings
+install_manifest.txt
+*~
