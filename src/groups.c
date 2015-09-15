@@ -183,9 +183,9 @@ void groups_init(struct groups *groups)
 	avl_init(&groups->groups, compare_groups, false, NULL);
 	groups->timer.cb = expire_groups;
 
-	groups_update_config(groups, false, 10 * OMGP_TIME_PER_SECOND,
+	groups_update_config(groups, false, OMGP_TIME_PER_SECOND / 10,
 			125 * OMGP_TIME_PER_SECOND, 2);
-	groups_update_config(groups, true, 10 * OMGP_TIME_PER_SECOND,
+	groups_update_config(groups, true, OMGP_TIME_PER_SECOND / 10,
 				125 * OMGP_TIME_PER_SECOND, 2);
 }
 
