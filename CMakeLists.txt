@@ -11,6 +11,9 @@ if(${L_LEVEL})
   add_definitions(-DL_LEVEL=${L_LEVEL})
 endif(${L_LEVEL})
 
+FIND_PATH(ubox_include_dir libubox/list.h)
+INCLUDE_DIRECTORIES(${ubox_include_dir})
+
 if(WITH_LIBUBOX)
   add_definitions(-Wextra)
   set(PLATFORM_LINK ${PLATFORM_LINK} ubox)
