@@ -21,6 +21,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <endian.h>
 #include <sys/socket.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
@@ -54,7 +55,13 @@ struct mrib_iface {
 	struct uloop_timeout timer;
 };
 
-static uint32_t ipv4_rtr_alert = cpu_to_be32(0x94040000);
+/* we can't use cpu_to_be32 outside a function */
+#if __BYTE_ORDER == __BIG_ENDIAN
+static uint32_t ipv4_rtr_alert = 0x94040000;
+#else
+static uint32_t ipv4_rtr_alert = 0x00000494;
+#endif
+
 static struct {
 	struct ip6_hbh hdr;
 	struct ip6_opt_router rt;
