@@ -158,7 +158,7 @@ static omgp_time_t expire_group(struct groups *groups, struct group *group,
 // Rearm the global groups-timer if the next event is before timer expiration
 static void rearm_timer(struct groups *groups, int msecs)
 {
-	int remain = uloop_timeout_remaining(&groups->timer);
+	int64_t remain = uloop_timeout_remaining64(&groups->timer);
 	if (remain < 0 || remain >= msecs)
 		uloop_timeout_set(&groups->timer, msecs);
 }
