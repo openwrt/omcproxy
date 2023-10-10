@@ -126,7 +126,7 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 {
 	struct proxy *proxy = NULL, *p;
 	list_for_each_entry(p, &proxies, head)
-		if (proxy->ifindex == uplink)
+		if (p->ifindex == uplink)
 			proxy = p;
 
 	if (proxy && (downlinks_cnt == 0 ||
