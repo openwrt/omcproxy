@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 2.8.8)
+cmake_minimum_required(VERSION 3.1)
 
 project(omcproxy C)
 
@@ -11,7 +11,7 @@ if(${L_LEVEL})
   add_definitions(-DL_LEVEL=${L_LEVEL})
 endif(${L_LEVEL})
 
-FIND_PATH(ubox_include_dir libubox/list.h)
+FIND_PATH(ubox_include_dir libubox/list.h HINTS ${CMAKE_SOURCE_DIR})
 INCLUDE_DIRECTORIES(${ubox_include_dir})
 
 if(WITH_LIBUBOX)
