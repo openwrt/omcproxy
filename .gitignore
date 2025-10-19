@@ -1,5 +1,6 @@
 .project
 .cproject
+build
 CMakeCache.txt
 CMakeFiles
 CMakeScripts
