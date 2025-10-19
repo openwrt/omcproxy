@@ -15,14 +15,8 @@ It is partly based on code of https://github.com/Oryon/pimbd
 	- Kernel-space multicast routing
 	- Multiple instances support
 	- Address-scope specific proxying
-	
 
 ## Compiling
-
-omcproxy uses libubox as submodule, be sure to clone this git repository
-with --recursive or run: "git submodule init; git submodule update"
-after cloning. If you are already using libubox as a shared library
-just pass -DWITH_LIBUBOX=1 to cmake.
 
 omcproxy uses cmake:
 - To prepare a Makefile use:  "cmake ." 
