@@ -1,0 +1,113 @@
+name: omcproxy
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  build:
+    name: Build ${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: aarch64
+            gcc: /usr/bin/aarch64-linux-gnu-gcc
+            packages: gcc-aarch64-linux-gnu
+          - arch: arm
+            gcc: /usr/bin/arm-linux-gnueabi-gcc
+            packages: gcc-arm-linux-gnueabi
+          - arch: mips
+            gcc: /usr/bin/mips-linux-gnu-gcc
+            packages: gcc-mips-linux-gnu
+          - arch: x86_64
+            gcc: /usr/bin/x86_64-linux-gnu-gcc
+            packages: gcc-x86-64-linux-gnu
+    outputs:
+      size-aarch64: ${{ steps.build.outputs.size_aarch64 }}
+      size-arm: ${{ steps.build.outputs.size_arm }}
+      size-mips: ${{ steps.build.outputs.size_mips }}
+      size-x86_64: ${{ steps.build.outputs.size_x86_64 }}
+    steps:
+      - name: Checkout omcproxy
+        uses: actions/checkout@v5
+
+      - name: Checkout json-c
+        uses: actions/checkout@v5
+        with:
+          repository: json-c/json-c
+          path: depends/json-c
+
+      - name: Checkout libubox
+        uses: actions/checkout@v5
+        with:
+          repository: openwrt/libubox
+          path: depends/libubox
+
+      - name: Install dependencies
+        run: |
+          sudo apt install ${{ matrix.packages }}
+
+      - name: Prepare build
+        run: |
+          mkdir -p ${GITHUB_WORKSPACE}/build
+
+      - name: Build json-c
+        working-directory: depends/json-c
+        run: |
+          cmake \
+            -DCMAKE_C_COMPILER=${{ matrix.gcc }} \
+            -DCMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/build \
+            -DBUILD_SHARED_LIBS=OFF -DDISABLE_EXTRA_LIBS=ON  \
+            --install-prefix ${GITHUB_WORKSPACE}/build
+          make
+          make install
+
+      - name: Build libubox
+        working-directory: depends/libubox
+        run: |
+          cmake \
+            -DCMAKE_C_COMPILER=${{ matrix.gcc }} \
+            -DCMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/build \
+            -DBUILD_LUA=OFF -DBUILD_EXAMPLES=OFF \
+            --install-prefix ${GITHUB_WORKSPACE}/build
+          make
+          make install
+
+      - id: build
+        name: Build omcproxy
+        env:
+          BUILD_DIR: build/omcproxy
+        run: |
+          cmake \
+            -DCMAKE_C_COMPILER=${{ matrix.gcc }} \
+            -DCMAKE_PREFIX_PATH=${GITHUB_WORKSPACE}/build \
+            -B $BUILD_DIR
+          make -C $BUILD_DIR
+          echo "size_${{ matrix.arch }}=$( find $BUILD_DIR -type f -name omcproxy -printf '%s' )" >> $GITHUB_OUTPUT
+
+      - name: Upload binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: omcproxy-${{ matrix.arch }}-binaries
+          path: |
+            build/omcproxy/omcproxy
+          if-no-files-found: error
+
+  summary:
+    name: Sizes
+    needs: [build]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Sizes summary
+        env:
+          size_aarch64: ${{needs.build.outputs.size-aarch64}}
+          size_arm: ${{needs.build.outputs.size-arm}}
+          size_mips: ${{needs.build.outputs.size-mips}}
+          size_x86_64: ${{needs.build.outputs.size-x86_64}}
+        run: |
+          echo "### ${GITHUB_WORKFLOW} sizes :floppy_disk:" >> $GITHUB_STEP_SUMMARY
+          echo "| Variant | aarch64 | arm | mips | x86_64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+          echo "| omcproxy | ${size_aarch64} | ${size_arm} | ${size_mips} | ${size_x86_64} |" >> $GITHUB_STEP_SUMMARY
