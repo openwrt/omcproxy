@@ -20,16 +20,6 @@
 #ifndef OMGPROXY_H_
 #define OMGPROXY_H_
 
-#define OMGPROXY_DEFAULT_L_LEVEL 7
-
-#ifndef L_LEVEL
-#define L_LEVEL OMGPROXY_DEFAULT_L_LEVEL
-#endif /* !L_LEVEL */
-
-#ifndef L_PREFIX
-#define L_PREFIX ""
-#endif /* !L_PREFIX */
-
 #ifdef __APPLE__
 
 #define __APPLE_USE_RFC_3542
@@ -64,46 +54,18 @@ static inline omgp_time_t omgp_time(void) {
 			((omgp_time_t)ts.tv_nsec / (1000000000 / OMGP_TIME_PER_SECOND));
 }
 
-extern int log_level;
-
 // Logging macros
+#ifndef L_LEVEL
+#define L_LEVEL LOG_WARNING
+#endif /* !L_LEVEL */
 
-#define L_INTERNAL(level, ...)                  \
-do {                                            \
-  if (log_level >= level)                       \
-    syslog(level, L_PREFIX __VA_ARGS__);        \
- } while(0)
+#define L_INTERNAL(level, ...) syslog(level, __VA_ARGS__);
 
-#if L_LEVEL >= LOG_ERR
 #define L_ERR(...) L_INTERNAL(LOG_ERR, __VA_ARGS__)
-#else
-#define L_ERR(...) do {} while(0)
-#endif
-
-#if L_LEVEL >= LOG_WARNING
 #define L_WARN(...) L_INTERNAL(LOG_WARNING, __VA_ARGS__)
-#else
-#define L_WARN(...) do {} while(0)
-#endif
-
-#if L_LEVEL >= LOG_NOTICE
 #define L_NOTICE(...) L_INTERNAL(LOG_NOTICE, __VA_ARGS__)
-#else
-#define L_NOTICE(...) do {} while(0)
-#endif
-
-#if L_LEVEL >= LOG_INFO
 #define L_INFO(...) L_INTERNAL(LOG_INFO, __VA_ARGS__)
-#else
-#define L_INFO(...) do {} while(0)
-#endif
-
-#if L_LEVEL >= LOG_DEBUG
 #define L_DEBUG(...) L_INTERNAL(LOG_DEBUG, __VA_ARGS__)
-#else
-#define L_DEBUG(...) do {} while(0)
-#endif
-
 
 // Some C99 compatibility
 #ifndef typeof

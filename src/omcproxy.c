@@ -29,9 +29,6 @@
 #include "omcproxy.h"
 #include "proxy.h"
 
-int log_level = LOG_WARNING;
-
-
 enum {
 	PROXY_ATTR_SOURCE,
 	PROXY_ATTR_SCOPE,
@@ -128,7 +125,8 @@ int main(int argc, char **argv) {
 	signal(SIGTERM, handle_signal);
 	signal(SIGHUP, SIG_IGN);
 	signal(SIGPIPE, SIG_IGN);
-	openlog("omcproxy", LOG_PERROR, LOG_DAEMON);
+	openlog("omcproxy", LOG_PERROR | LOG_PID, LOG_DAEMON);
+	setlogmask(LOG_UPTO(L_LEVEL));
 
 	if (getuid()) {
 		L_ERR("must be run as root!");
@@ -147,8 +145,10 @@ int main(int argc, char **argv) {
 			usage(argv[0]);
 			return 1;
 		} else if (!strncmp(argv[i], "-v", 2)) {
+			int log_level;
 			if ((log_level = atoi(&argv[i][2])) <= 0)
-				log_level = 7;
+				log_level = LOG_DEBUG;
+			setlogmask(LOG_UPTO(log_level));
 			continue;
 		}
 
