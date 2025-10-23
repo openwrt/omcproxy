@@ -18,7 +18,11 @@ It is partly based on code of https://github.com/Oryon/pimbd
 
 ## Compiling
 
-omcproxy uses cmake:
-- To prepare a Makefile use:  "cmake ." 
-- To build / install use: "make" / "make install" afterwards.
-- To build DEB or RPM packages use: "make package" afterwards.
+The easiest way to compile omcproxy is by using `devel-build.sh` script within `sripts/` directory. Simply execute
+
+```bash
+./scripts/devel-build.sh
+```
+
+Note that `cmake` is required.
+
