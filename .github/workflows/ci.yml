@@ -21,6 +21,9 @@ jobs:
           - arch: mips
             gcc: /usr/bin/mips-linux-gnu-gcc
             packages: gcc-mips-linux-gnu
+          - arch: powerpc
+            gcc: /usr/bin/powerpc-linux-gnu-gcc
+            packages: gcc-powerpc-linux-gnu
           - arch: x86_64
             gcc: /usr/bin/x86_64-linux-gnu-gcc
             packages: gcc-x86-64-linux-gnu
@@ -28,6 +31,7 @@ jobs:
       size-aarch64: ${{ steps.build.outputs.size_aarch64 }}
       size-arm: ${{ steps.build.outputs.size_arm }}
       size-mips: ${{ steps.build.outputs.size_mips }}
+      size-powerpc: ${{ steps.build.outputs.size_powerpc }}
       size-x86_64: ${{ steps.build.outputs.size_x86_64 }}
     steps:
       - name: Checkout omcproxy
@@ -111,9 +115,10 @@ jobs:
           size_aarch64: ${{needs.build.outputs.size-aarch64}}
           size_arm: ${{needs.build.outputs.size-arm}}
           size_mips: ${{needs.build.outputs.size-mips}}
+          size_powerpc: ${{needs.build.outputs.size-powerpc}}
           size_x86_64: ${{needs.build.outputs.size-x86_64}}
         run: |
           echo "### ${GITHUB_WORKFLOW} sizes :floppy_disk:" >> $GITHUB_STEP_SUMMARY
-          echo "| Variant | aarch64 | arm | mips | x86_64 |" >> $GITHUB_STEP_SUMMARY
-          echo "| :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
-          echo "| omcproxy | ${size_aarch64} | ${size_arm} | ${size_mips} | ${size_x86_64} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Variant | aarch64 | arm | mips | powerpc | x86_64 |" >> $GITHUB_STEP_SUMMARY
+          echo "| :---: | :---: | :---: | :---: | :---: | :---: |" >> $GITHUB_STEP_SUMMARY
+          echo "| omcproxy | ${size_aarch64} | ${size_arm} | ${size_mips} | ${size_powerpc} | ${size_x86_64} |" >> $GITHUB_STEP_SUMMARY
