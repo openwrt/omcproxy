@@ -306,7 +306,7 @@ static void mrib_receive_mrt(struct uloop_fd *fd, __unused unsigned flags)
 			uint32_t *opts = (uint32_t*)&iph[1];
 			bool alert = (void*)&opts[1] <= (void*)igmp && *opts == ipv4_rtr_alert;
 			if (!alert && (igmp->type != IGMP_HOST_MEMBERSHIP_QUERY ||
-							(size_t)len > sizeof(*igmp) || igmp->code > 0)) {
+							(size_t)len > sizeof(*igmp))) {
 				L_WARN("%s: ignoring invalid IGMP-message of type %x from %s on %d",
 						__FUNCTION__, igmp->type, addrbuf, ifindex);
 				continue;
