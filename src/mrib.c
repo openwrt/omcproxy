@@ -305,6 +305,22 @@ static void mrib_receive_mrt(struct uloop_fd *fd, __unused unsigned flags)
 
 			uint32_t *opts = (uint32_t*)&iph[1];
 			bool alert = (void*)&opts[1] <= (void*)igmp && *opts == ipv4_rtr_alert;
+			if (!alert
+				&& igmp->type == IGMP_HOST_MEMBERSHIP_QUERY
+				&& (size_t) len == sizeof(*igmp)
+				&& igmp->code == 0x64
+				&& iph->version == 0x4
+				&& iph->ihl == 0x5
+				&& iph->tos == 0x00
+				&& iph->tot_len == cpu_to_be16(28)
+				&& iph->id == cpu_to_be16(1)
+				&& iph->frag_off == 0x00
+				&& iph->ttl == 1) {
+				/* Workaround RTL8373 queries without Router Alert */
+				L_DEBUG("%s: workaround IGMP query without Router Alert from %s on %d",
+						__FUNCTION__, addrbuf, ifindex);
+				alert = true;
+			}
 			if (!alert && (igmp->type != IGMP_HOST_MEMBERSHIP_QUERY ||
 							(size_t)len > sizeof(*igmp) || igmp->code > 0)) {
 				L_WARN("%s: ignoring invalid IGMP-message of type %x from %s on %d",
