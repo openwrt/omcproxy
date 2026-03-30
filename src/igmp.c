@@ -192,7 +192,7 @@ int igmp_send_query(struct querier_iface *q,
 				break;
 			}
 
-			query.q.srcs[cnt] = querier_unmap(&s->addr);
+			query.q.srcs[cnt++] = querier_unmap(&s->addr);
 		}
 	}
 	query.q.nsrcs = htons(cnt);
