@@ -604,24 +604,25 @@ static struct mrib_iface* mrib_get_iface(int ifindex)
 static void mrib_clean_iface(struct mrib_iface *iface)
 {
 	if (list_empty(&iface->users) && list_empty(&iface->queriers)) {
+		const int ifindex = iface->ifindex;
 		iface->ifindex = 0;
 		mrib_clean(&iface->timer);
 
 		size_t mifid = iface - mifs;
 		struct vifctl ctl = {mifid, VIFF_USE_IFINDEX, 1, 0,
-				{ .vifc_lcl_ifindex = iface->ifindex }, {INADDR_ANY}};
+				{ .vifc_lcl_ifindex = ifindex }, {INADDR_ANY}};
 		setsockopt(mrt_fd.fd, IPPROTO_IP, MRT_DEL_VIF, &ctl, sizeof(ctl));
 
-		struct mif6ctl ctl6 = {mifid, 0, 1, iface->ifindex, 0};
+		struct mif6ctl ctl6 = {mifid, 0, 1, ifindex, 0};
 		setsockopt(mrt6_fd.fd, IPPROTO_IPV6, MRT6_DEL_MIF, &ctl6, sizeof(ctl6));
 
-		struct ip_mreqn mreq = {{INADDR_ALLIGMPV3RTRS_GROUP}, {INADDR_ANY}, iface->ifindex};
+		struct ip_mreqn mreq = {{INADDR_ALLIGMPV3RTRS_GROUP}, {INADDR_ANY}, ifindex};
 		setsockopt(mrt_fd.fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
 
 		mreq.imr_multiaddr.s_addr = cpu_to_be32(INADDR_ALLRTRS_GROUP);
 		setsockopt(mrt_fd.fd, IPPROTO_IP, IP_DROP_MEMBERSHIP, &mreq, sizeof(mreq));
 
-		struct ipv6_mreq mreq6 = {MLD2_ALL_MCR_INIT, iface->ifindex};
+		struct ipv6_mreq mreq6 = {MLD2_ALL_MCR_INIT, ifindex};
 		setsockopt(mrt6_fd.fd, IPPROTO_IPV6, IPV6_DROP_MEMBERSHIP, &mreq6, sizeof(mreq6));
 
 		mreq6.ipv6mr_multiaddr.s6_addr[15] = 0x02;
