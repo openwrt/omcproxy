@@ -97,8 +97,10 @@ int client_init(struct client *client, int ifindex)
 		return -errno;
 
 	client->mld_fd = socket(AF_INET6, SOCK_DGRAM | SOCK_CLOEXEC, 0);
-	if (client->mld_fd < 0)
+	if (client->mld_fd < 0) {
+		close(client->igmp_fd);
 		return -errno;
+	}
 
 	client->ifindex = ifindex;
 	return 0;

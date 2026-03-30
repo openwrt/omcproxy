@@ -77,7 +77,7 @@ static ssize_t mld_handle_record(struct groups *groups, const uint8_t *data, siz
 void mld_handle(struct mrib_querier *mrib, const struct mld_hdr *hdr, size_t len,
 		const struct sockaddr_in6 *from)
 {
-	char addrbuf[INET_ADDRSTRLEN];
+	char addrbuf[INET6_ADDRSTRLEN];
 	omgp_time_t now = omgp_time();
 	inet_ntop(AF_INET6, &hdr->mld_addr, addrbuf, sizeof(addrbuf));
 
