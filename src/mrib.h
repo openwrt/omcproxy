@@ -80,6 +80,9 @@ int mrib_flush(struct mrib_user *user, const struct in6_addr *group, uint8_t gro
 // Add interface to filter
 int mrib_filter_add(mrib_filter *filter, struct mrib_user *user);
 
+// Re-evaluate forwarding state of all known sources of a group
+void mrib_refresh_user(struct mrib_user *user, const struct in6_addr *group);
+
 // Send IGMP-packet
 int mrib_send_igmp(struct mrib_querier *querier, struct igmpv3_query *igmp, size_t len,
 		const struct sockaddr_in *dest);
