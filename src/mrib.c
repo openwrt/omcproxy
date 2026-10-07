@@ -173,15 +173,23 @@ static size_t mrib_find(int ifindex)
 	return i;
 }
 
+// Build the forwarding-filter for a (group, source) pair from all users
+static void mrib_filter_build(struct mrib_iface *iface,
+		const struct in6_addr *group, const struct in6_addr *source,
+		mrib_filter *filter)
+{
+	struct mrib_user *user;
+	list_for_each_entry(user, &iface->users, head)
+		if (user->cb_newsource)
+			user->cb_newsource(user, group, source, filter);
+}
+
 // Notify all users of a new multicast source
 static void mrib_notify_newsource(struct mrib_iface *iface,
 		const struct in6_addr *group, const struct in6_addr *source)
 {
 	mrib_filter filter = 0;
-	struct mrib_user *user;
-	list_for_each_entry(user, &iface->users, head)
-		if (user->cb_newsource)
-			user->cb_newsource(user, group, source, &filter);
+	mrib_filter_build(iface, group, source, &filter);
 
 	char groupbuf[INET6_ADDRSTRLEN], sourcebuf[INET6_ADDRSTRLEN];
 	inet_ntop(AF_INET6, group, groupbuf, sizeof(groupbuf));
@@ -200,6 +208,29 @@ static void mrib_notify_newsource(struct mrib_iface *iface,
 
 		list_add_tail(&route->head, &iface->routes);
 		mrib_set(group, source, iface, filter, 0);
+	}
+}
+
+// Re-evaluate the forwarding state of all known sources of a group
+// (e.g. after a downstream membership change). Sources are usually
+// detected before the first downstream member subscribes, in which
+// case their multicast route is installed as a placeholder without
+// outgoing interfaces and would only be re-evaluated after the
+// regular lifetime-based cleanup otherwise.
+void mrib_refresh_user(struct mrib_user *user, const struct in6_addr *group)
+{
+	struct mrib_iface *iface = user->iface;
+	if (!iface)
+		return;
+
+	struct mrib_route *c;
+	list_for_each_entry(c, &iface->routes, head) {
+		if (!IN6_ARE_ADDR_EQUAL(&c->group, group))
+			continue;
+
+		mrib_filter filter = 0;
+		mrib_filter_build(iface, &c->group, &c->source, &filter);
+		mrib_set(&c->group, &c->source, iface, filter, 0);
 	}
 }
 
