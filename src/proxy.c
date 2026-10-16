@@ -29,6 +29,7 @@ struct proxy {
 	struct mrib_user mrib;
 	struct querier querier;
 	enum proxy_flags flags;
+	struct proxy_options opts;
 };
 
 struct proxy_downlink {
@@ -129,7 +130,8 @@ static int proxy_unset(struct proxy *proxyp)
 }
 
 // Add / update proxy
-int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags)
+int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags,
+		const struct proxy_options *opts)
 {
 	struct proxy *proxy = NULL, *p;
 	list_for_each_entry(p, &proxies, head)
@@ -154,6 +156,8 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 
 		proxy->flags = flags;
 		proxy->ifindex = uplink;
+		if (opts)
+			proxy->opts = *opts;
 		querier_init(&proxy->querier);
 		list_add(&proxy->head, &proxies);
 		if (mrib_attach_user(&proxy->mrib, uplink, proxy_mrib))
@@ -197,7 +201,8 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 		if (mrib_attach_user(&downlink->mrib, downlinks[i], NULL))
 			goto downlink_err2;
 
-		if (querier_attach(&downlink->iface, &proxy->querier, downlinks[i], proxy_trigger))
+		if (querier_attach(&downlink->iface, &proxy->querier, downlinks[i], proxy_trigger,
+				&proxy->opts.querier))
 			goto downlink_err1;
 
 		downlink->flags = proxy->flags;

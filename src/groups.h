@@ -56,6 +56,7 @@ struct groups_config {
 struct groups {
 	struct groups_config cfg_v4;
 	struct groups_config cfg_v6;
+	omgp_time_t last_listener_query_interval;
 	struct avl_tree groups;
 	struct uloop_timeout timer;
 	size_t source_limit;
