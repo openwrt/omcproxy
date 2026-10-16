@@ -173,8 +173,8 @@ static size_t mrib_find(int ifindex)
 	return i;
 }
 
-// Notify all users of a new multicast source
-static void mrib_notify_newsource(struct mrib_iface *iface,
+// Ask all users for the outgoing interfaces of a multicast route
+static mrib_filter mrib_route_filter(struct mrib_iface *iface,
 		const struct in6_addr *group, const struct in6_addr *source)
 {
 	mrib_filter filter = 0;
@@ -182,6 +182,15 @@ static void mrib_notify_newsource(struct mrib_iface *iface,
 	list_for_each_entry(user, &iface->users, head)
 		if (user->cb_newsource)
 			user->cb_newsource(user, group, source, &filter);
+
+	return filter;
+}
+
+// Notify all users of a new multicast source
+static void mrib_notify_newsource(struct mrib_iface *iface,
+		const struct in6_addr *group, const struct in6_addr *source)
+{
+	mrib_filter filter = mrib_route_filter(iface, group, source);
 
 	char groupbuf[INET6_ADDRSTRLEN], sourcebuf[INET6_ADDRSTRLEN];
 	inet_ntop(AF_INET6, group, groupbuf, sizeof(groupbuf));
@@ -718,6 +727,27 @@ int mrib_flush(struct mrib_user *user, const struct in6_addr *group, uint8_t gro
 
 	if (found)
 		mrib_clean(&iface->timer);
+
+	return (found) ? 0 : -ENOENT;
+}
+
+// Update the outgoing interfaces of the known routes of a group
+int mrib_refresh(struct mrib_user *user, const struct in6_addr *group, uint8_t group_plen)
+{
+	struct mrib_iface *iface = user->iface;
+	if (!iface)
+		return -ENOENT;
+
+	bool found = false;
+	struct mrib_route *route;
+	list_for_each_entry(route, &iface->routes, head) {
+		if (!prefix_contains(group, group_plen, &route->group))
+			continue;
+
+		mrib_set(&route->group, &route->source, iface,
+				mrib_route_filter(iface, &route->group, &route->source), 0);
+		found = true;
+	}
 
 	return (found) ? 0 : -ENOENT;
 }
