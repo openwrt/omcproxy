@@ -189,6 +189,7 @@ static void querier_configure(struct querier_iface *iface, const struct querier_
 
 	if (cfg && cfg->last_member_query_interval > 0)
 		iface->groups.last_listener_query_interval = cfg->last_member_query_interval;
+	iface->groups.fast_leave = cfg && cfg->fast_leave;
 
 	groups_update_config(&iface->groups, false, qri, qi, robustness);
 	groups_update_config(&iface->groups, true, qri, qi, robustness);

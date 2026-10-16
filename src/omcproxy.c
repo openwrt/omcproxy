@@ -117,6 +117,10 @@ static bool option_parse(const char *c, struct proxy_options *opts)
 	struct querier_config *q = &opts->querier;
 	long v;
 
+	if (!strcmp(c, "fast_leave")) {
+		q->fast_leave = true;
+		return true;
+	}
 	if (!strncmp(c, "robustness=", 11) && option_int(&c[11], 255, &v)) {
 		q->robustness = (int)v;
 		return true;
@@ -155,6 +159,7 @@ static void usage(const char *arg) {
 			"	query_interval=<s>		general query interval in seconds (default: 125)\n"
 			"	query_response_interval=<ds>	maximum response delay in tenths of a second (default: 100)\n"
 			"	last_member_query_interval=<ds>	last member query interval in tenths of a second (default: 10)\n"
+			"	fast_leave			end a group or source at once on a leave\n"
 			"\nOptions:\n"
 			"	-v				verbose logging\n"
 			"	-h				show this help\n",
@@ -203,7 +208,7 @@ int main(int argc, char **argv) {
 		for (char *c = strtok(argv[i], ","); c; c = strtok(NULL, ",")) {
 			if (!strncmp(c, "scope=", 6)) {
 				scope = &c[6];
-			} else if (strchr(c, '=')) {
+			} else if (strchr(c, '=') || !strcmp(c, "fast_leave")) {
 				if (!option_parse(c, &opts)) {
 					fprintf(stderr, "invalid proxy option: %s\n", c);
 					start = false;
