@@ -111,6 +111,43 @@ static bool option_int(const char *value, long max, long *out)
 	return true;
 }
 
+// Parse an altnet=<prefix> value into a v4-mapped or IPv6 prefix
+static bool option_altnet(const char *value, struct proxy_options *opts)
+{
+	char buf[INET6_ADDRSTRLEN + 4];
+	struct proxy_altnet *net;
+	char *slash, *end;
+	struct in_addr a4;
+	long plen;
+
+	if (opts->altnets_cnt >= PROXY_MAX_ALTNETS || strlen(value) >= sizeof(buf))
+		return false;
+
+	strcpy(buf, value);
+	if (!(slash = strchr(buf, '/')))
+		return false;
+	*slash++ = '\0';
+	plen = strtol(slash, &end, 10);
+	if (*slash == '\0' || *end != '\0' || plen < 0)
+		return false;
+
+	net = &opts->altnets[opts->altnets_cnt];
+	if (inet_pton(AF_INET, buf, &a4) == 1 && plen <= 32) {
+		memset(&net->addr, 0, sizeof(net->addr));
+		net->addr.s6_addr[10] = 0xff;
+		net->addr.s6_addr[11] = 0xff;
+		memcpy(&net->addr.s6_addr[12], &a4, sizeof(a4));
+		net->plen = (uint8_t)(96 + plen);
+	} else if (inet_pton(AF_INET6, buf, &net->addr) == 1 && plen <= 128) {
+		net->plen = (uint8_t)plen;
+	} else {
+		return false;
+	}
+
+	opts->altnets_cnt++;
+	return true;
+}
+
 // Parse one proxy option; false for an unknown or invalid option
 static bool option_parse(const char *c, struct proxy_options *opts)
 {
@@ -137,6 +174,8 @@ static bool option_parse(const char *c, struct proxy_options *opts)
 		q->last_member_query_interval = v * OMGP_TIME_PER_SECOND / 10;
 		return true;
 	}
+	if (!strncmp(c, "altnet=", 7))
+		return option_altnet(&c[7], opts);
 
 	return false;
 }
@@ -160,6 +199,8 @@ static void usage(const char *arg) {
 			"	query_response_interval=<ds>	maximum response delay in tenths of a second (default: 100)\n"
 			"	last_member_query_interval=<ds>	last member query interval in tenths of a second (default: 10)\n"
 			"	fast_leave			end a group or source at once on a leave\n"
+			"	altnet=<prefix>			route only sources in these networks (may repeat;\n"
+			"					default: all sources of the family)\n"
 			"\nOptions:\n"
 			"	-v				verbose logging\n"
 			"	-h				show this help\n",
