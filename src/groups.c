@@ -182,6 +182,7 @@ void groups_init(struct groups *groups)
 {
 	avl_init(&groups->groups, compare_groups, false, NULL);
 	groups->timer.cb = expire_groups;
+	groups->last_listener_query_interval = 1 * OMGP_TIME_PER_SECOND;
 
 	groups_update_config(groups, false, OMGP_TIME_PER_SECOND * 10,
 			125 * OMGP_TIME_PER_SECOND, 2);
@@ -248,7 +249,7 @@ void groups_update_config(struct groups *groups, bool v6,
 	cfg->query_interval = query_interval;
 	cfg->robustness = robustness;
 	cfg->last_listener_query_count = cfg->robustness;
-	cfg->last_listener_query_interval = 1 * OMGP_TIME_PER_SECOND;
+	cfg->last_listener_query_interval = groups->last_listener_query_interval;
 }
 
 // Update timers for a given group (called when receiving queries from other queriers)

@@ -21,6 +21,8 @@
 #include <stdbool.h>
 #include <netinet/in.h>
 
+#include "querier.h"
+
 enum proxy_flags {
 	// minimum scope to proxy (use only one, includes higher scopes)
 	PROXY_REALMLOCAL = 3,
@@ -38,7 +40,12 @@ enum proxy_flags {
 };
 
 
-int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags);
+struct proxy_options {
+	struct querier_config querier;
+};
+
+int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags,
+		const struct proxy_options *opts);
 
 
 void proxy_update(bool all);

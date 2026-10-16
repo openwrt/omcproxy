@@ -42,7 +42,7 @@ static struct blobmsg_policy proxy_policy[PROXY_ATTR_MAX] = {
 	[PROXY_ATTR_DEST] = { .name = "dest", .type = BLOBMSG_TYPE_ARRAY },
 };
 
-static int handle_proxy_set(void *data, size_t len)
+static int handle_proxy_set(void *data, size_t len, const struct proxy_options *opts)
 {
 	struct blob_attr *tb[PROXY_ATTR_MAX], *c;
 	blobmsg_parse(proxy_policy, PROXY_ATTR_MAX, tb, data, len);
@@ -97,7 +97,44 @@ static int handle_proxy_set(void *data, size_t len)
 		}
 	}
 
-	return proxy_set(uplink, downlinks, downlinks_cnt, flags);
+	return proxy_set(uplink, downlinks, downlinks_cnt, flags, opts);
+}
+
+// Parse a positive integer option value
+static bool option_int(const char *value, long max, long *out)
+{
+	char *end;
+	long v = strtol(value, &end, 10);
+	if (*value == '\0' || *end != '\0' || v <= 0 || v > max)
+		return false;
+	*out = v;
+	return true;
+}
+
+// Parse one proxy option; false for an unknown or invalid option
+static bool option_parse(const char *c, struct proxy_options *opts)
+{
+	struct querier_config *q = &opts->querier;
+	long v;
+
+	if (!strncmp(c, "robustness=", 11) && option_int(&c[11], 255, &v)) {
+		q->robustness = (int)v;
+		return true;
+	}
+	if (!strncmp(c, "query_interval=", 15) && option_int(&c[15], 31744, &v)) {
+		q->query_interval = v * OMGP_TIME_PER_SECOND;
+		return true;
+	}
+	if (!strncmp(c, "query_response_interval=", 24) && option_int(&c[24], 31744, &v)) {
+		q->query_response_interval = v * OMGP_TIME_PER_SECOND / 10;
+		return true;
+	}
+	if (!strncmp(c, "last_member_query_interval=", 27) && option_int(&c[27], 31744, &v)) {
+		q->last_member_query_interval = v * OMGP_TIME_PER_SECOND / 10;
+		return true;
+	}
+
+	return false;
 }
 
 static void handle_signal(__unused int signal)
@@ -114,6 +151,10 @@ static void usage(const char *arg) {
 			"	<interface>			interfaces to proxy (first is uplink)\n"
 			"	scope=<scope>			minimum multicast scope to proxy\n"
 			"		[global,organization,site,admin,realm] (default: global)\n"
+			"	robustness=<n>			querier robustness variable (default: 2)\n"
+			"	query_interval=<s>		general query interval in seconds (default: 125)\n"
+			"	query_response_interval=<ds>	maximum response delay in tenths of a second (default: 100)\n"
+			"	last_member_query_interval=<ds>	last member query interval in tenths of a second (default: 10)\n"
 			"\nOptions:\n"
 			"	-v				verbose logging\n"
 			"	-h				show this help\n",
@@ -139,7 +180,10 @@ int main(int argc, char **argv) {
 	for (ssize_t i = 1; i < argc; ++i) {
 		const char *source = NULL;
 		const char *scope = NULL;
+		struct proxy_options opts;
 		struct blob_buf b = {NULL, NULL, 0, NULL};
+
+		memset(&opts, 0, sizeof(opts));
 
 		if (!strcmp(argv[i], "-h")) {
 			usage(argv[0]);
@@ -159,6 +203,11 @@ int main(int argc, char **argv) {
 		for (char *c = strtok(argv[i], ","); c; c = strtok(NULL, ",")) {
 			if (!strncmp(c, "scope=", 6)) {
 				scope = &c[6];
+			} else if (strchr(c, '=')) {
+				if (!option_parse(c, &opts)) {
+					fprintf(stderr, "invalid proxy option: %s\n", c);
+					start = false;
+				}
 			} else if (!source) {
 				source = c;
 			} else {
@@ -173,7 +222,7 @@ int main(int argc, char **argv) {
 		if (scope)
 			blobmsg_add_string(&b, "scope", scope);
 
-		if (handle_proxy_set(blob_data(b.head), blob_len(b.head))) {
+		if (handle_proxy_set(blob_data(b.head), blob_len(b.head), &opts)) {
 			fprintf(stderr, "failed to setup proxy: %s\n", argv[i]);
 			start = false;
 		}

@@ -29,11 +29,20 @@
 #include "mrib.h"
 #include "groups.h"
 
+// Querier settings of a downlink; a zero value keeps the default.
+struct querier_config {
+	int robustness;
+	omgp_time_t query_interval;
+	omgp_time_t query_response_interval;
+	omgp_time_t last_member_query_interval;
+};
+
 struct querier_iface {
 	struct list_head head;
 	struct list_head users;
 	struct uloop_timeout timeout;
-	struct groups_config cfg;
+	struct groups_config cfg_v4;
+	struct groups_config cfg_v6;
 
 	struct uloop_fd igmp_fd;
 	omgp_time_t igmp_next_query;
@@ -76,7 +85,7 @@ int querier_init(struct querier *querier);
 void querier_deinit(struct querier *querier);
 
 int querier_attach(struct querier_user_iface *user, struct querier *querier,
-		int ifindex, querier_iface_cb *cb);
+		int ifindex, querier_iface_cb *cb, const struct querier_config *cfg);
 void querier_detach(struct querier_user_iface *user);
 
 

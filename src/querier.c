@@ -88,7 +88,7 @@ static void querier_iface_timer(struct uloop_timeout *timeout)
 	if (iface->igmp_next_query <= now) {
 		// If the other querier is gone, reset interface config
 		if (iface->igmp_other_querier) {
-			iface->groups.cfg_v4 = iface->cfg;
+			iface->groups.cfg_v4 = iface->cfg_v4;
 			iface->igmp_other_querier = false;
 		}
 
@@ -109,7 +109,7 @@ static void querier_iface_timer(struct uloop_timeout *timeout)
 	if (iface->mld_next_query <= now) {
 		// If the other querier is gone, reset interface config
 		if (iface->mld_other_querier) {
-			iface->groups.cfg_v6 = iface->cfg;
+			iface->groups.cfg_v6 = iface->cfg_v6;
 			iface->mld_other_querier = false;
 		}
 
@@ -178,9 +178,28 @@ uint16_t querier_mrc(int mrd)
 	return htons(mrd);
 }
 
+// Apply the configured querier settings to an interface
+static void querier_configure(struct querier_iface *iface, const struct querier_config *cfg)
+{
+	struct groups_config *v4 = &iface->groups.cfg_v4;
+	int robustness = (cfg && cfg->robustness > 0) ? cfg->robustness : v4->robustness;
+	omgp_time_t qi = (cfg && cfg->query_interval > 0) ? cfg->query_interval : v4->query_interval;
+	omgp_time_t qri = (cfg && cfg->query_response_interval > 0) ?
+			cfg->query_response_interval : v4->query_response_interval;
+
+	if (cfg && cfg->last_member_query_interval > 0)
+		iface->groups.last_listener_query_interval = cfg->last_member_query_interval;
+
+	groups_update_config(&iface->groups, false, qri, qi, robustness);
+	groups_update_config(&iface->groups, true, qri, qi, robustness);
+	iface->cfg_v4 = iface->groups.cfg_v4;
+	iface->cfg_v6 = iface->groups.cfg_v6;
+}
+
 // Attach an interface to a querier-instance
 int querier_attach(struct querier_user_iface *user,
-		struct querier *querier, int ifindex, querier_iface_cb *cb)
+		struct querier *querier, int ifindex, querier_iface_cb *cb,
+		const struct querier_config *cfg)
 {
 	struct querier_iface *c, *iface = NULL;
 	list_for_each_entry(c, &ifaces, head) {
@@ -210,7 +229,7 @@ int querier_attach(struct querier_user_iface *user,
 		iface->groups.group_limit = QUERIER_MAX_GROUPS;
 		iface->groups.cb_update = querier_announce_change;
 		iface->groups.cb_query = querier_send_query;
-		iface->cfg = iface->groups.cfg_v6;
+		querier_configure(iface, cfg);
 		iface->igmp_startup_tries = iface->groups.cfg_v4.robustness;
 		iface->mld_startup_tries = iface->groups.cfg_v6.robustness;
 
