@@ -121,10 +121,15 @@ void igmp_handle(struct mrib_querier *mrib, const struct igmphdr *igmp, size_t l
 		L_INFO("%s: detected other querier %s with priority %d on %d",
 				__FUNCTION__, addrbuf, election, q->ifindex);
 
-		// TODO: we ignore IGMPv1/v2 queriers for now, since a lot of them are dumb switches
+		// An IGMPv1/v2 query carries no robustness or query interval, so
+		// such a querier only takes over the query role. Snooping switches
+		// send queries from 0.0.0.0 (RFC 4541 2.1.1) and stay out of the
+		// election.
+		bool older = (size_t)len == sizeof(*igmp);
 
-		if (election < 0 && !query->group && len > sizeof(*igmp)) {
-			groups_update_config(&q->groups, false, mrd, query_interval, robustness);
+		if (election < 0 && !query->group && from->sin_addr.s_addr != htonl(INADDR_ANY)) {
+			if (!older)
+				groups_update_config(&q->groups, false, mrd, query_interval, robustness);
 
 			q->igmp_other_querier = true;
 			q->igmp_next_query = now + (q->groups.cfg_v4.query_response_interval / 2) +
