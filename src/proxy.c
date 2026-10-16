@@ -35,6 +35,7 @@ struct proxy_downlink {
 	struct querier_user_iface iface;
 	struct mrib_user mrib;
 	struct client client;
+	struct proxy *proxy;
 	enum proxy_flags flags;
 };
 
@@ -92,8 +93,14 @@ static void proxy_trigger(struct querier_user_iface *user, const struct in6_addr
 		bool include, const struct in6_addr *sources, size_t len)
 {
 	struct proxy_downlink *iface = container_of(user, struct proxy_downlink, iface);
-	if (proxy_match_scope(iface->flags, group))
-		client_set(&iface->client, group, include, sources, len);
+	if (!proxy_match_scope(iface->flags, group))
+		return;
+
+	client_set(&iface->client, group, include, sources, len);
+
+	// The kernel reports a source only once, when its first packet has no
+	// route. A route that exists must follow the membership changes.
+	mrib_refresh(&iface->proxy->mrib, group, 128);
 }
 
 // Remove proxy with given name
@@ -180,6 +187,9 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 		struct proxy_downlink *downlink = calloc(1, sizeof(*downlink));
 		if (!downlink)
 			goto err;
+
+		// querier_attach() can call proxy_trigger() before it returns.
+		downlink->proxy = proxy;
 
 		if (client_init(&downlink->client, uplink))
 			goto downlink_err3;
