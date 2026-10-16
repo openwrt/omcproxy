@@ -80,6 +80,9 @@ int mrib_flush(struct mrib_user *user, const struct in6_addr *group, uint8_t gro
 // Update the outgoing interfaces of the known routes of a group
 int mrib_refresh(struct mrib_user *user, const struct in6_addr *group, uint8_t group_plen);
 
+// Test whether addr lies in the prefix p/plen
+uint8_t prefix_contains(const struct in6_addr *p, uint8_t plen, const struct in6_addr *addr);
+
 // Add interface to filter
 int mrib_filter_add(mrib_filter *filter, struct mrib_user *user);
 

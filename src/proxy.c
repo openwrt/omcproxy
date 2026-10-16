@@ -70,12 +70,32 @@ static bool proxy_match_scope(enum proxy_flags flags, const struct in6_addr *add
 	return scope >= (flags & _PROXY_SCOPEMASK);
 }
 
+// Test a source against the source networks of a proxy. A proxy without
+// networks of the family of the source routes every source.
+static bool proxy_match_source(const struct proxy *proxy, const struct in6_addr *source)
+{
+	bool v4 = IN6_IS_ADDR_V4MAPPED(source);
+	bool family_listed = false;
+
+	for (size_t i = 0; i < proxy->opts.altnets_cnt; ++i) {
+		const struct proxy_altnet *net = &proxy->opts.altnets[i];
+		if (IN6_IS_ADDR_V4MAPPED(&net->addr) != v4)
+			continue;
+
+		family_listed = true;
+		if (prefix_contains(&net->addr, net->plen, source))
+			return true;
+	}
+
+	return !family_listed;
+}
+
 // Test and set multicast route (called by mrib on detection of new source)
 static void proxy_mrib(struct mrib_user *mrib, const struct in6_addr *group,
 		const struct in6_addr *source, mrib_filter *filter)
 {
 	struct proxy *proxy = container_of(mrib, struct proxy, mrib);
-	if (!proxy_match_scope(proxy->flags, group))
+	if (!proxy_match_scope(proxy->flags, group) || !proxy_match_source(proxy, source))
 		return;
 
 	omgp_time_t now = omgp_time();

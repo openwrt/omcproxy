@@ -40,8 +40,18 @@ enum proxy_flags {
 };
 
 
+#define PROXY_MAX_ALTNETS 16
+
+// Source networks a proxy routes from; IPv4 networks are v4-mapped.
+struct proxy_altnet {
+	struct in6_addr addr;
+	uint8_t plen;
+};
+
 struct proxy_options {
 	struct querier_config querier;
+	struct proxy_altnet altnets[PROXY_MAX_ALTNETS];
+	size_t altnets_cnt;
 };
 
 int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags,
