@@ -342,7 +342,9 @@ void groups_update_state(struct groups *groups,
 
 	int llqc = cfg->last_listener_query_count;
 	omgp_time_t mali = now + (cfg->robustness * cfg->query_interval) + cfg->query_response_interval;
-	omgp_time_t llqt = now + (cfg->last_listener_query_interval * llqc);
+	// Fast leave ends the group or sources at once; the queries still go
+	// out, so that other members report again.
+	omgp_time_t llqt = groups->fast_leave ? now : now + (cfg->last_listener_query_interval * llqc);
 
 	// RFC 3810 7.4
 	struct list_head saved = LIST_HEAD_INIT(saved);

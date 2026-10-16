@@ -35,6 +35,7 @@ struct querier_config {
 	omgp_time_t query_interval;
 	omgp_time_t query_response_interval;
 	omgp_time_t last_member_query_interval;
+	bool fast_leave;
 };
 
 struct querier_iface {
