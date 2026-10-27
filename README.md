@@ -26,3 +26,13 @@ The easiest way to compile omcproxy is by using `devel-build.sh` script within `
 
 Note that `cmake` is required.
 
+## Tests
+
+Integration tests require Docker and `NET_ADMIN`:
+
+```bash
+make -C build
+./tests/run-docker-test.sh
+```
+
+They cover interface lifecycle handling and IPv4 multicast data forwarding through the proxy.
