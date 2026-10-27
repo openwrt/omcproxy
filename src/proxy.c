@@ -16,6 +16,12 @@
  */
 
 #include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/ioctl.h>
+#include <sys/socket.h>
+#include <net/if.h>
 #include <libubox/list.h>
 
 #include "querier.h"
@@ -23,29 +29,49 @@
 #include "mrib.h"
 #include "proxy.h"
 
+struct proxy_downlink {
+	struct list_head head;
+	struct querier_user_iface iface;
+	struct mrib_user mrib;
+	struct client client;
+	char *ifname;
+	int ifindex;
+	enum proxy_flags flags;
+	bool attached;
+};
+
 struct proxy {
 	struct list_head head;
+	struct list_head downlinks;
+	char *ifname;
 	int ifindex;
 	struct mrib_user mrib;
 	struct querier querier;
 	enum proxy_flags flags;
-};
-
-struct proxy_downlink {
-	struct querier_user_iface iface;
-	struct mrib_user mrib;
-	struct client client;
-	enum proxy_flags flags;
+	bool attached;
 };
 
 static struct list_head proxies = LIST_HEAD_INIT(proxies);
 
-// Remove and cleanup a downlink
+// Detach the runtime part of a downlink, keeping its configuration.
+static void proxy_downlink_detach(struct proxy_downlink *downlink)
+{
+	if (!downlink->attached)
+		return;
+
+	querier_detach(&downlink->iface);
+	mrib_detach_user(&downlink->mrib);
+	client_deinit(&downlink->client);
+	downlink->ifindex = 0;
+	downlink->attached = false;
+}
+
+// Remove and cleanup a downlink configuration.
 static void proxy_remove_downlink(struct proxy_downlink *downlink)
 {
-	mrib_detach_user(&downlink->mrib);
-	querier_detach(&downlink->iface);
-	client_deinit(&downlink->client);
+	proxy_downlink_detach(downlink);
+	list_del(&downlink->head);
+	free(downlink->ifname);
 	free(downlink);
 }
 
@@ -96,24 +122,165 @@ static void proxy_trigger(struct querier_user_iface *user, const struct in6_addr
 		client_set(&iface->client, group, include, sources, len);
 }
 
-// Remove proxy with given name
+// Return true if an interface exists and is administratively up.
+static bool proxy_get_ifindex(const char *ifname, int *ifindex)
+{
+	int fd = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+	struct ifreq ifr = {};
+	int idx;
+
+	if (fd < 0)
+		return false;
+
+	if (strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1),
+		ioctl(fd, SIOCGIFFLAGS, &ifr)) {
+		close(fd);
+		return false;
+	}
+
+	idx = if_nametoindex(ifname);
+	close(fd);
+
+	if (!idx || !(ifr.ifr_flags & IFF_UP))
+		return false;
+
+	*ifindex = idx;
+	return true;
+}
+
+static int proxy_downlink_attach(struct proxy *proxy, struct proxy_downlink *downlink)
+{
+	int ifindex;
+	int ret;
+
+	if (downlink->attached)
+		return 0;
+
+	if (!proxy->attached || !proxy_get_ifindex(downlink->ifname, &ifindex))
+		return -ENODEV;
+
+	if (ifindex == proxy->ifindex)
+		return -EINVAL;
+
+	ret = client_init(&downlink->client, proxy->ifindex);
+	if (ret)
+		return ret;
+
+	ret = mrib_attach_user(&downlink->mrib, ifindex, NULL);
+	if (ret)
+		goto err_client;
+
+	ret = querier_attach(&downlink->iface, &proxy->querier, ifindex, proxy_trigger);
+	if (ret)
+		goto err_mrib;
+
+	downlink->ifindex = ifindex;
+	downlink->attached = true;
+	return 0;
+
+err_mrib:
+	mrib_detach_user(&downlink->mrib);
+err_client:
+	client_deinit(&downlink->client);
+	return ret;
+}
+
+static void proxy_downlinks_detach(struct proxy *proxy)
+{
+	struct proxy_downlink *downlink;
+	list_for_each_entry(downlink, &proxy->downlinks, head)
+		proxy_downlink_detach(downlink);
+}
+
+static int proxy_attach(struct proxy *proxy)
+{
+	int ifindex;
+	int ret;
+
+	if (proxy->attached)
+		return 0;
+
+	if (!proxy_get_ifindex(proxy->ifname, &ifindex))
+		return -ENODEV;
+
+	ret = mrib_attach_user(&proxy->mrib, ifindex, proxy_mrib);
+	if (ret)
+		return ret;
+
+	proxy->ifindex = ifindex;
+	proxy->attached = true;
+
+	struct proxy_downlink *downlink;
+	list_for_each_entry(downlink, &proxy->downlinks, head)
+		proxy_downlink_attach(proxy, downlink);
+
+	L_INFO("proxy: attached uplink %s (%d)", proxy->ifname, proxy->ifindex);
+	return 0;
+}
+
+static void proxy_detach(struct proxy *proxy)
+{
+	if (!proxy->attached)
+		return;
+
+	proxy_downlinks_detach(proxy);
+	mrib_detach_user(&proxy->mrib);
+	proxy->ifindex = 0;
+	proxy->attached = false;
+
+	L_INFO("proxy: detached uplink %s", proxy->ifname);
+}
+
+static void proxy_reconcile(struct proxy *proxy)
+{
+	int ifindex;
+	bool up = proxy_get_ifindex(proxy->ifname, &ifindex);
+
+	if (!up) {
+		proxy_detach(proxy);
+		return;
+	}
+
+	if (!proxy->attached || proxy->ifindex != ifindex) {
+		proxy_detach(proxy);
+		if (proxy_attach(proxy))
+			return;
+	}
+
+	struct proxy_downlink *downlink;
+	list_for_each_entry(downlink, &proxy->downlinks, head) {
+		int downlink_ifindex;
+		bool down = proxy_get_ifindex(downlink->ifname, &downlink_ifindex);
+
+		if (!down) {
+			proxy_downlink_detach(downlink);
+			continue;
+		}
+
+		if (downlink->attached && downlink->ifindex != downlink_ifindex)
+			proxy_downlink_detach(downlink);
+
+		if (!downlink->attached)
+			proxy_downlink_attach(proxy, downlink);
+	}
+}
+
+// Remove proxy with given pointer. This destroys the configuration.
 static int proxy_unset(struct proxy *proxyp)
 {
 	bool found = false;
 	struct proxy *proxy, *n;
 	list_for_each_entry_safe(proxy, n, &proxies, head) {
 		if ((proxyp && proxy == proxyp) ||
-				(!proxyp && (proxy->flags & _PROXY_UNUSED))) {
-			mrib_detach_user(&proxy->mrib);
+			(!proxyp && (proxy->flags & _PROXY_UNUSED))) {
+			struct proxy_downlink *downlink, *dn;
+			list_for_each_entry_safe(downlink, dn, &proxy->downlinks, head)
+				proxy_remove_downlink(downlink);
 
-			struct querier_user *user, *n;
-			list_for_each_entry_safe(user, n, &proxy->querier.ifaces, head) {
-				struct querier_user_iface *i = container_of(user, struct querier_user_iface, user);
-				proxy_remove_downlink(container_of(i, struct proxy_downlink, iface));
-			}
-
+			proxy_detach(proxy);
 			querier_deinit(&proxy->querier);
 			list_del(&proxy->head);
+			free(proxy->ifname);
 			free(proxy);
 			found = true;
 		}
@@ -121,12 +288,15 @@ static int proxy_unset(struct proxy *proxyp)
 	return (found) ? 0 : -ENOENT;
 }
 
-// Add / update proxy
-int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags)
+// Add / update proxy. Interface names are kept as configuration; interfaces
+// may be absent or down and will be attached later by proxy_reconcile().
+int proxy_set(const char *uplink, const char *downlinks[], size_t downlinks_cnt, enum proxy_flags flags)
 {
 	struct proxy *proxy = NULL, *p;
+	int ret = 0;
+
 	list_for_each_entry(p, &proxies, head)
-		if (p->ifindex == uplink)
+		if (!strcmp(p->ifname, uplink))
 			proxy = p;
 
 	if (proxy && (downlinks_cnt == 0 ||
@@ -146,29 +316,31 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 			flags |= PROXY_GLOBAL;
 
 		proxy->flags = flags;
-		proxy->ifindex = uplink;
+		proxy->ifname = strdup(uplink);
+		if (!proxy->ifname) {
+			free(proxy);
+			return -ENOMEM;
+		}
+
+		INIT_LIST_HEAD(&proxy->downlinks);
 		querier_init(&proxy->querier);
 		list_add(&proxy->head, &proxies);
-		if (mrib_attach_user(&proxy->mrib, uplink, proxy_mrib))
-			goto err;
 	}
 
-	struct querier_user *user, *n;
-	list_for_each_entry_safe(user, n, &proxy->querier.ifaces, head) {
-		struct querier_user_iface *iface = container_of(user, struct querier_user_iface, user);
-
+	// The desired downlink set is represented by persistent downlink objects.
+	// Remove entries which are no longer present in the configuration.
+	struct proxy_downlink *downlink, *dn;
+	list_for_each_entry_safe(downlink, dn, &proxy->downlinks, head) {
 		size_t i;
-		for (i = 0; i < downlinks_cnt && downlinks[i] == iface->iface->ifindex; ++i);
+		for (i = 0; i < downlinks_cnt && strcmp(downlinks[i], downlink->ifname); ++i);
 		if (i == downlinks_cnt)
-			proxy_remove_downlink(container_of(iface, struct proxy_downlink, iface));
+			proxy_remove_downlink(downlink);
 	}
 
 	for (size_t i = 0; i < downlinks_cnt; ++i) {
 		bool found = false;
-		struct querier_user *user;
-		list_for_each_entry(user, &proxy->querier.ifaces, head) {
-			struct querier_user_iface *iface = container_of(user, struct querier_user_iface, user);
-			if (iface->iface->ifindex == downlinks[i]) {
+		list_for_each_entry(downlink, &proxy->downlinks, head) {
+			if (!strcmp(downlink->ifname, downlinks[i])) {
 				found = true;
 				break;
 			}
@@ -177,36 +349,37 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 		if (found)
 			continue;
 
-		struct proxy_downlink *downlink = calloc(1, sizeof(*downlink));
-		if (!downlink)
+		downlink = calloc(1, sizeof(*downlink));
+		if (!downlink) {
+			ret = -ENOMEM;
 			goto err;
+		}
 
-		if (client_init(&downlink->client, uplink))
-			goto downlink_err3;
-
-		if (mrib_attach_user(&downlink->mrib, downlinks[i], NULL))
-			goto downlink_err2;
-
-		if (querier_attach(&downlink->iface, &proxy->querier, downlinks[i], proxy_trigger))
-			goto downlink_err1;
+		downlink->ifname = strdup(downlinks[i]);
+		if (!downlink->ifname) {
+			free(downlink);
+			ret = -ENOMEM;
+			goto err;
+		}
 
 		downlink->flags = proxy->flags;
-		continue;
-
-downlink_err1:
-		mrib_detach_user(&downlink->mrib);
-downlink_err2:
-		client_deinit(&downlink->client);
-downlink_err3:
-		free(downlink);
-		goto err;
+		list_add_tail(&downlink->head, &proxy->downlinks);
 	}
 
+	proxy_reconcile(proxy);
 	return 0;
 
 err:
 	proxy_unset(proxy);
-	return -errno;
+	return ret ? ret : -ENOMEM;
+}
+
+// Reconcile all configured proxies after an interface topology change.
+void proxy_reconcile_all(void)
+{
+	struct proxy *proxy;
+	list_for_each_entry(proxy, &proxies, head)
+		proxy_reconcile(proxy);
 }
 
 // Mark all flushable proxies as unused
