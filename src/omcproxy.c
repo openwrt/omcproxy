@@ -22,6 +22,10 @@
 #include <netdb.h>
 #include <net/if.h>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/socket.h>
+#include <linux/netlink.h>
+#include <linux/rtnetlink.h>
 
 #include <libubox/uloop.h>
 #include <libubox/blobmsg.h>
@@ -48,18 +52,12 @@ static int handle_proxy_set(void *data, size_t len)
 	blobmsg_parse(proxy_policy, PROXY_ATTR_MAX, tb, data, len);
 
 	const char *name = ((c = tb[PROXY_ATTR_SOURCE])) ? blobmsg_get_string(c) : NULL;
-	int uplink = 0;
-	int downlinks[32] = {0};
+	const char *downlinks[32];
 	size_t downlinks_cnt = 0;
 	enum proxy_flags flags = 0;
 
 	if (!name)
 		return -EINVAL;
-
-	if (!(uplink = if_nametoindex(name))) {
-		L_WARN("%s(%s): %s", __FUNCTION__, name, strerror(errno));
-		return -errno;
-	}
 
 	if ((c = tb[PROXY_ATTR_SCOPE])) {
 		const char *scope = blobmsg_get_string(c);
@@ -89,15 +87,74 @@ static int handle_proxy_set(void *data, size_t len)
 				return -EINVAL;
 			}
 
-			const char *n = blobmsg_type(d) == BLOBMSG_TYPE_STRING ? blobmsg_get_string(d) : "";
-			if (!(downlinks[downlinks_cnt++] = if_nametoindex(n))) {
-				L_WARN("%s(%s): %s (%s)", __FUNCTION__, name, strerror(errno), blobmsg_get_string(d));
-				return -errno;
+			if (blobmsg_type(d) != BLOBMSG_TYPE_STRING) {
+				return -EINVAL;
 			}
+
+			downlinks[downlinks_cnt++] = blobmsg_get_string(d);
 		}
 	}
 
-	return proxy_set(uplink, downlinks, downlinks_cnt, flags);
+	return proxy_set(name, downlinks, downlinks_cnt, flags);
+}
+
+static struct uloop_fd rtnl_fd = { .fd = -1 };
+
+static void rtnl_event(struct uloop_fd *fd, unsigned int events)
+{
+	char buf[8192];
+	ssize_t len;
+
+	if (!(events & ULOOP_READ))
+		return;
+
+	while ((len = recv(fd->fd, buf, sizeof(buf), MSG_DONTWAIT)) > 0) {
+		struct nlmsghdr *nlh;
+		int remaining = (int)len;
+
+		for (nlh = (struct nlmsghdr *)buf; NLMSG_OK(nlh, remaining);
+			nlh = NLMSG_NEXT(nlh, remaining)) {
+			if (nlh->nlmsg_type == NLMSG_DONE)
+				break;
+			if (nlh->nlmsg_type == NLMSG_ERROR)
+				continue;
+			if (nlh->nlmsg_type == RTM_NEWLINK || nlh->nlmsg_type == RTM_DELLINK)
+				proxy_reconcile_all();
+		}
+	}
+}
+
+static int rtnl_init(void)
+{
+	struct sockaddr_nl addr = {
+		.nl_family = AF_NETLINK,
+		.nl_groups = RTMGRP_LINK,
+	};
+
+	rtnl_fd.fd = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC | SOCK_NONBLOCK, NETLINK_ROUTE);
+	if (rtnl_fd.fd < 0)
+		return -errno;
+
+	if (bind(rtnl_fd.fd, (struct sockaddr *)&addr, sizeof(addr))) {
+		int ret = -errno;
+		close(rtnl_fd.fd);
+		rtnl_fd.fd = -1;
+		return ret;
+	}
+
+	rtnl_fd.cb = rtnl_event;
+	uloop_fd_add(&rtnl_fd, ULOOP_READ);
+	return 0;
+}
+
+static void rtnl_deinit(void)
+{
+	if (rtnl_fd.fd < 0)
+		return;
+
+	uloop_fd_delete(&rtnl_fd);
+	close(rtnl_fd.fd);
+	rtnl_fd.fd = -1;
 }
 
 static void handle_signal(__unused int signal)
@@ -135,6 +192,11 @@ int main(int argc, char **argv) {
 
 	uloop_init();
 	bool start = true;
+
+	if (rtnl_init()) {
+		L_ERR("failed to initialize rtnetlink listener: %s", strerror(errno));
+		start = false;
+	}
 
 	for (ssize_t i = 1; i < argc; ++i) {
 		const char *source = NULL;
@@ -191,6 +253,7 @@ int main(int argc, char **argv) {
 
 	proxy_update(true);
 	proxy_flush();
+	rtnl_deinit();
 
 	uloop_done();
 	return 0;

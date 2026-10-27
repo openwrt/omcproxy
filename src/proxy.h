@@ -37,9 +37,8 @@ enum proxy_flags {
 	_PROXY_SCOPEMASK = 0xf,
 };
 
+int proxy_set(const char *uplink, const char *downlinks[], size_t downlinks_cnt, enum proxy_flags flags);
 
-int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum proxy_flags flags);
-
-
+void proxy_reconcile_all(void);
 void proxy_update(bool all);
 void proxy_flush(void);
