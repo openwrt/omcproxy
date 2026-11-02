@@ -1,0 +1,21 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        cmake \
+        iproute2 \
+        procps \
+        socat \
+        ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /src
+
+COPY . .
+
+ENV LD_LIBRARY_PATH=/src/build/lib
+
+CMD ["/src/tests/run-integration-tests.sh", "/src/build/omcproxy"]
