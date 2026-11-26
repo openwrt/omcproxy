@@ -51,10 +51,14 @@ static void querier_remove_group(struct groups *groups, struct group *group, omg
 	querier_clear_sources(group);
 	group->exclude_until = 0;
 
+	// Unlink before notifying: a user asking for the group's state has to see
+	// that it is gone, not an empty state that it could read as a listener
+	// that wants nothing.
+	avl_delete(&groups->groups, &group->node);
+
 	if (groups->cb_update)
 		groups->cb_update(groups, group, now);
 
-	avl_delete(&groups->groups, &group->node);
 	free(group);
 }
 
