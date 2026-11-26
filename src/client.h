@@ -38,9 +38,16 @@ int client_init(struct client *client, int ifindex);
 // Deregister a new interface from proxy
 void client_deinit(struct client *client);
 
-// Set / update / delete a multicast proxy entry
-int client_set(struct client *client, const struct in6_addr *group, bool include,
+// Join a multicast group with the given source filter
+int client_join(struct client *client, const struct in6_addr *group, bool include,
 		const struct in6_addr sources[], size_t cnt);
+
+// Replace the source filter of a joined group, keeping the membership
+int client_update(struct client *client, const struct in6_addr *group, bool include,
+		const struct in6_addr sources[], size_t cnt);
+
+// Leave a multicast group
+int client_leave(struct client *client, const struct in6_addr *group);
 
 // Unmap IPv4 address
 static inline void client_unmap(struct in_addr *addr4, const struct in6_addr *addr6)

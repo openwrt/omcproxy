@@ -49,7 +49,8 @@ struct proxy_sources {
 	size_t cap;
 };
 
-// Filter last handed to the kernel for one group of a proxy
+// Filter last handed to the kernel for one group of a proxy. An entry exists
+// only while the group is joined on the uplink.
 struct proxy_applied {
 	struct avl_node node;
 	struct in6_addr addr;
@@ -222,11 +223,9 @@ static void proxy_applied_clear(struct proxy *proxy)
 }
 
 // Test if the kernel already holds the given filter for a group
-static bool proxy_applied_test(struct proxy *proxy, const struct in6_addr *group,
+static bool proxy_applied_test(const struct proxy_applied *applied,
 		bool include, const struct proxy_sources *set)
 {
-	struct proxy_applied *applied = avl_find_element(&proxy->applied, group, applied, node);
-
 	if (!applied || applied->include != include || applied->sources.cnt != set->cnt)
 		return false;
 
@@ -235,6 +234,14 @@ static bool proxy_applied_test(struct proxy *proxy, const struct in6_addr *group
 			return false;
 
 	return true;
+}
+
+// Forget the filter of a group that is no longer joined
+static void proxy_applied_drop(struct proxy *proxy, struct proxy_applied *applied)
+{
+	avl_delete(&proxy->applied, &applied->node);
+	free(applied->sources.addrs);
+	free(applied);
 }
 
 // Remember the filter handed to the kernel for a group
@@ -256,9 +263,7 @@ static void proxy_applied_store(struct proxy *proxy, const struct in6_addr *grou
 	if (set->cnt > 0) {
 		if (!(addrs = malloc(set->cnt * sizeof(*addrs)))) {
 			// Forget the entry, so that the next event is applied again
-			avl_delete(&proxy->applied, &applied->node);
-			free(applied->sources.addrs);
-			free(applied);
+			proxy_applied_drop(proxy, applied);
 			return;
 		}
 
@@ -277,6 +282,9 @@ static bool proxy_downlink_state(struct proxy_downlink *downlink,
 		const struct in6_addr *group, omgp_time_t now, struct proxy_state *state)
 {
 	const struct group *g = groups_get(downlink->iface.user.groups, group);
+	struct group_source *source;
+	size_t cnt = 0;
+
 	if (!g)
 		return false;
 
@@ -284,57 +292,82 @@ static bool proxy_downlink_state(struct proxy_downlink *downlink,
 
 	// A downlink with IGMPv1/v2 reporters records EXCLUDE without sources
 	// (RFC 3376 7.2.1), which asks for any source.
-	state->any = (g->compat_v1_until > now || g->compat_v2_until > now);
-	state->include = !state->any && group_is_included(g, now);
-
-	if (!state->include && !state->any) {
-		size_t cnt = 0;
-		struct group_source *source;
-
-		group_for_each_active_source(source, g, now)
-			++cnt;
-
-		// EXCLUDE without an exception: any source as well
-		state->any = (cnt == 0);
+	if (g->compat_v1_until > now || g->compat_v2_until > now) {
+		state->include = false;
+		state->any = true;
+		return true;
 	}
+
+	state->include = group_is_included(g, now);
+
+	group_for_each_active_source(source, g, now)
+		++cnt;
+
+	// INCLUDE without sources is the "no sources wanted" state of RFC 3376 /
+	// RFC 3810: this downlink does not want the group at all. It turns up when
+	// the last listener leaves and after a TO_IN without sources, and joining
+	// the group upstream for it would be wrong twice: it is not a request for
+	// any source, and RFC 4607 does not allow an EXCLUDE join for an SSM group.
+	if (state->include && cnt == 0)
+		return false;
+
+	// EXCLUDE without exceptions asks for every source
+	state->any = (cnt == 0);
 
 	return true;
 }
 
 // Aggregate the listener states of all downlinks of a proxy for one group
-// (RFC 4605 3.2.2). Returns 0 or -ENOMEM if the aggregate did not fit.
+// (RFC 4605 3.2.2). Returns 0 or -ENOMEM if the aggregate did not fit;
+// listeners tells whether any downlink wants the group at all.
 static int proxy_aggregate(struct proxy *proxy, const struct in6_addr *group,
-		bool *include, struct proxy_sources *set)
+		bool *include, struct proxy_sources *set, bool *listeners)
 {
 	omgp_time_t now = omgp_time();
 	struct querier_user *user;
 	struct group_source *source;
-	struct proxy_state state;
+	size_t ifaces = 0, cnt = 0;
 	bool first = true;
+
+	list_for_each_entry(user, &proxy->querier.ifaces, head)
+		++ifaces;
+
+	// Read every downlink's state once and aggregate the snapshot
+	struct proxy_state states[ifaces ? ifaces : 1];
+
+	list_for_each_entry(user, &proxy->querier.ifaces, head) {
+		if (proxy_downlink_state(proxy_downlink_of(user), group, now, &states[cnt]))
+			++cnt;
+	}
 
 	set->cnt = 0;
 	*include = true;
+	*listeners = (cnt > 0);
 
-	// Any EXCLUDE downlink makes the aggregate EXCLUDE; one that asks for any
-	// source leaves nothing to exclude.
-	list_for_each_entry(user, &proxy->querier.ifaces, head) {
-		if (!proxy_downlink_state(proxy_downlink_of(user), group, now, &state) ||
-				state.include)
-			continue;
-
-		*include = false;
-		if (state.any)
+	// A downlink that takes the group from every source decides it for all of
+	// them: the union of the receive sets is "any source" as well (RFC 4605
+	// 3.2.2). This is where INCLUDE from one downlink and EXCLUDE from another
+	// end up, without a filter change between them.
+	for (size_t i = 0; i < cnt; ++i) {
+		if (states[i].any) {
+			*include = false;
 			return 0;
+		}
+
+		if (!states[i].include)
+			*include = false;
 	}
+
+	if (!cnt)
+		return 0;
 
 	if (*include) {
 		// INCLUDE: union of the include lists
-		list_for_each_entry(user, &proxy->querier.ifaces, head) {
-			if (!proxy_downlink_state(proxy_downlink_of(user), group, now, &state) ||
-					!state.include)
+		for (size_t i = 0; i < cnt; ++i) {
+			if (!states[i].include)
 				continue;
 
-			group_for_each_active_source(source, state.group, now)
+			group_for_each_active_source(source, states[i].group, now)
 				if (!proxy_sources_add(set, &source->addr))
 					return -ENOMEM;
 		}
@@ -343,28 +376,26 @@ static int proxy_aggregate(struct proxy *proxy, const struct in6_addr *group,
 	}
 
 	// EXCLUDE: intersection of the exception lists
-	list_for_each_entry(user, &proxy->querier.ifaces, head) {
-		if (!proxy_downlink_state(proxy_downlink_of(user), group, now, &state) ||
-				state.include)
+	for (size_t i = 0; i < cnt; ++i) {
+		if (states[i].include)
 			continue;
 
 		if (first) {
-			group_for_each_active_source(source, state.group, now)
+			group_for_each_active_source(source, states[i].group, now)
 				if (!proxy_sources_add(set, &source->addr))
 					return -ENOMEM;
 			first = false;
 		} else {
-			proxy_sources_intersect(set, state.group, now);
+			proxy_sources_intersect(set, states[i].group, now);
 		}
 	}
 
 	// A source that an INCLUDE downlink asks for is not excluded after all
-	list_for_each_entry(user, &proxy->querier.ifaces, head) {
-		if (!proxy_downlink_state(proxy_downlink_of(user), group, now, &state) ||
-				!state.include)
+	for (size_t i = 0; i < cnt; ++i) {
+		if (!states[i].include)
 			continue;
 
-		group_for_each_active_source(source, state.group, now)
+		group_for_each_active_source(source, states[i].group, now)
 			proxy_sources_del(set, &source->addr);
 	}
 
@@ -375,7 +406,9 @@ static int proxy_aggregate(struct proxy *proxy, const struct in6_addr *group,
 static void proxy_update_group(struct proxy *proxy, const struct in6_addr *group)
 {
 	struct proxy_sources set = {0};
+	struct proxy_applied *applied;
 	bool include = true;
+	bool listeners = false;
 
 	// Match the proxy's scope, not a downlink's: proxy_set() sets a downlink's
 	// flags only after querier_attach() has announced every group that exists
@@ -384,17 +417,28 @@ static void proxy_update_group(struct proxy *proxy, const struct in6_addr *group
 	if (!proxy_match_scope(proxy->flags, group))
 		return;
 
-	if (proxy_aggregate(proxy, group, &include, &set)) {
+	if (proxy_aggregate(proxy, group, &include, &set, &listeners)) {
 		L_WARN("%s: failed to aggregate downlinks, keeping the membership", __FUNCTION__);
 		goto out;
 	}
 
-	// Do not hand the kernel a filter it already holds: client_set() would leave
-	// the group on the upstream first and end the stream for the downlinks that
-	// still listen.
-	if (!proxy_applied_test(proxy, group, include, &set) &&
-			client_set(&proxy->client, group, include, set.addrs, set.cnt) == 0)
-		proxy_applied_store(proxy, group, include, &set);
+	applied = avl_find_element(&proxy->applied, group, applied, node);
+
+	if (!listeners) {
+		// No downlink wants the group any more: the only case that leaves it
+		// on the upstream.
+		if (applied && client_leave(&proxy->client, group) == 0)
+			proxy_applied_drop(proxy, applied);
+	} else if (!applied) {
+		if (client_join(&proxy->client, group, include, set.addrs, set.cnt) == 0)
+			proxy_applied_store(proxy, group, include, &set);
+	} else if (!proxy_applied_test(applied, include, &set)) {
+		// The membership exists, only its filter changed. MSFILTER replaces
+		// the filter in place (RFC 3678), so the uplink does not see a leave
+		// and the players already watching keep their stream.
+		if (client_update(&proxy->client, group, include, set.addrs, set.cnt) == 0)
+			proxy_applied_store(proxy, group, include, &set);
+	}
 
 out:
 	free(set.addrs);
@@ -410,10 +454,8 @@ static void proxy_trigger(struct querier_user_iface *user, const struct in6_addr
 {
 	struct proxy_downlink *downlink = container_of(user, struct proxy_downlink, iface);
 
-	// One upstream membership per uplink and group: it is the aggregation of
-	// every downlink, so that one downlink leaving cannot end the stream for
-	// the listeners that remain. The aggregate is read from every downlink, so
-	// the state announced here (include, sources, len) is not used.
+	// The aggregate is read from every downlink, so the state announced here
+	// (include, sources, len) is not used.
 	proxy_update_group(downlink->proxy, group);
 }
 
@@ -514,7 +556,6 @@ int proxy_set(int uplink, const int downlinks[], size_t downlinks_cnt, enum prox
 		if (!downlink)
 			goto err;
 
-		// querier_attach() can call proxy_trigger() before it returns.
 		downlink->proxy = proxy;
 
 		if (mrib_attach_user(&downlink->mrib, downlinks[i], NULL))
